@@ -1,0 +1,413 @@
+---
+title: "Client Report - Late Flights & Missing Data (JSON)"
+subtitle: "Course DS 250"
+author: "HENRY FELIPE"
+format:
+  html:
+    self-contained: true
+    page-layout: full
+    title-block-banner: true
+    toc: true
+    toc-depth: 3
+    toc-location: body
+    number-sections: false
+    html-math-method: katex
+    code-fold: true
+    code-summary: "Show the code"
+    code-overflow: wrap
+    code-copy: hover
+    code-tools:
+        source: false
+        toggle: true
+        caption: See code
+execute: 
+  warning: false
+    
+---
+
+```{python}
+import pandas as pd
+import numpy as np
+import json
+import calendar
+from lets_plot import *
+
+LetsPlot.setup_html(isolated_frame=True)
+```
+
+
+```{python}
+# Learn morea about Code Cells: https://quarto.org/docs/reference/cells/cells-jupyter.html
+
+# Include and execute your code here
+df = pd.read_json("https://github.com/byuidatascience/data4missing/raw/master/data-raw/flights_missing/flights_missing.json")
+```
+
+## Elevator pitch
+The analysis shows that weather delays are the most significant source of flight disruptions. Carrier delays remain the second-largest factor, indicating operational inefficiencies within airlines, while security delays contribute negligibly across all airports. Focusing on improved scheduling and contingency plans during adverse weather could yield the greatest reduction in total delays.
+
+## QUESTION|TASK 1
+
+__Fix all of the varied missing data types in the data to be consistent (all missing values should be displayed as “NaN”).__ In your report include one record example (one row) from your new data, in the raw JSON format. Your example should display the "NaN" for at least one missing value.__  
+
+All missing-value indicators were successfully standardized to NaN, ensuring data consistency across all columns. The cleaned dataset was saved as flights_clean.json, ready for accurate analysis and visualization.
+.
+```{python}
+
+# Step 1: Replace varied missing-value indicators with np.nan
+missing_indicators = [
+    "", " ", "NA", "N/A", "n/a", "na", "NaN", "nan", "NULL",
+    "null", "None", "none", "missing", "unknown", "?"
+]
+df = df.replace(missing_indicators, np.nan)
+
+# Step 2: Trim whitespace
+df = df.map(lambda x: x.strip() if isinstance(x, str) else x)
+
+# Step 3: Show missing-value summary
+print("Missing values per column:")
+print(df.isna().sum())
+
+# Step 4: Example record for the report
+record_with_nan = df[df.isna().any(axis=1)].iloc[0]
+record_json = record_with_nan.to_frame().T.to_json(orient="records")
+record_json_display = record_json.replace("null", "NaN")
+
+print("\nExample record (raw JSON) with at least one NaN:")
+print(record_json_display)
+
+# Step 5: Save JSON file where null → "NaN"
+output_path = "flights_clean.json"
+#First, export as normal JSON (with null)
+temp_json = df.to_json(orient="records", indent=2, force_ascii=False)
+# Then, replace all nulls with "NaN" for display consistency
+clean_json = temp_json.replace("null", '"NaN"')
+with open(output_path, "w", encoding="utf-8") as f:
+    f.write(clean_json)
+
+print(f"\n Cleaned dataset saved as '{output_path}' (missing values shown as 'NaN')")
+
+```
+
+
+## QUESTION|TASK 2
+
+__Which airport has the worst delays?__ Describe the metric you chose, and why you chose it to determine the “worst” airport. Your answer should include a summary table that lists (for each airport) the total number of flights, total number of delayed flights, proportion of delayed flights, and average delay time in hours.   
+
+Based on the proportion of delayed flights and average delay time, SFO (San Francisco International Airport) has the worst delays, with over 26% of its flights delayed. This suggests that SFO experiences more frequent and longer delays than other airports, likely due to heavy traffic and weather-related factors.
+
+```{python}
+
+# Which airport has the worst delays?
+
+# Prepare numeric columns
+numeric_cols = [
+    "num_of_flights_total",
+    "num_of_delays_total",
+    "minutes_delayed_total"
+]
+
+for col in numeric_cols:
+    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+# Create a binary flag (1 if airport had any delayed flights, else 0)
+df["DelayedFlag"] = np.where(df["num_of_delays_total"] > 0, 1, 0)
+
+# Group by airport_code and compute metrics
+summary = df.groupby("airport_code").agg(
+    total_flights=("num_of_flights_total", "sum"),
+    delayed_flights=("num_of_delays_total", "sum"),
+    avg_delay_hours=("minutes_delayed_total", lambda x: x.mean() / 60)  # convert minutes → hours
+).reset_index()
+
+#Calculate the true proportion of delayed flights
+summary["proportion_delayed"] = summary["delayed_flights"] / summary["total_flights"]
+
+# Sort to show the worst airports first
+summary_sorted = summary.sort_values(
+    by=["proportion_delayed", "avg_delay_hours"],
+    ascending=[False, False]
+)
+
+# Display the summary table
+print("\nSummary of Airport Delays:\n")
+summary_sorted_rounded = summary_sorted.round(3)
+display(summary_sorted_rounded)
+
+# Show Top 3 worst airports
+print("\nTop 3 Airports with the Worst Delays:\n")
+top3 = summary_sorted_rounded.head(3)
+display(top3)
+
+
+
+```
+
+
+
+## QUESTION|TASK 3
+
+__What is the best month to fly if you want to avoid delays of any length?__ Describe the metric you chose and why you chose it to calculate your answer. Include one chart to help support your answer, with the x-axis ordered by month. (To answer this question, you will need to remove any rows that are missing the `Month` variable.)  
+
+Based on the percentage of total delay minutes per month, September and November show the lowest proportions of delays, making them the best months to fly if you want to avoid disruptions. I chose this metric because it reflects the overall share of delay time across all flights, offering a clear picture of when delays are least frequent.
+
+```{python}
+# Include and execute your code here
+
+
+
+# --- Convert minutes_delayed_total to numeric ---
+df["minutes_delayed_total"] = pd.to_numeric(df["minutes_delayed_total"], errors="coerce")
+
+# --- Clean and normalize month names ---
+df["month"] = df["month"].astype(str).str.strip().str.title()
+
+# --- Keep only valid months ---
+valid_months = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+]
+df = df[df["month"].isin(valid_months)]
+
+# --- Group by month and sum total delay minutes ---
+month_summary = (
+    df.groupby("month", as_index=False)
+    .agg(total_delay_minutes=("minutes_delayed_total", "sum"))
+)
+
+# --- Calculate total minutes across all months ---
+total_delay_all = month_summary["total_delay_minutes"].sum()
+
+# --- Compute percentage for each month ---
+month_summary["DelayPercent"] = (month_summary["total_delay_minutes"] / total_delay_all) * 100
+
+# --- Sort months in calendar order ---
+month_summary["month"] = pd.Categorical(month_summary["month"], categories=valid_months, ordered=True)
+month_summary = month_summary.sort_values("month")
+
+# --- Visualization ---
+p = (
+    ggplot(month_summary, aes(x="month", y="DelayPercent"))
+    + geom_bar(stat="identity", fill="steelblue")
+    + ggtitle("Percentage of Total Delay Minutes per Month")
+    + xlab("Month")
+    + ylab("Percentage of Total Delay Minutes (%)")
+    + scale_y_continuous(limits=[0, 15])
+    + theme(
+        axis_text_x=element_text(angle=45, hjust=1),
+        panel_grid_major_y=element_line(size=0.5, color="gray"),
+        panel_background=element_rect(fill="white")
+    )
+)
+
+p
+
+
+
+```
+
+
+
+## QUESTION|TASK 4
+
+According to the BTS website, the “Weather” category only accounts for severe weather delays. Mild weather delays are not counted in the “Weather” category, but are actually included in both the “NAS” and “Late-Arriving Aircraft” categories. __Your job is to create a new column that calculates the total number of flights delayed by weather (both severe and mild).__ You will need to replace all the missing values in the Late Aircraft variable with the mean. Show your work by printing the first 5 rows of data in a table. Use these three rules for your calculations:  
+
+    a. 100% of delayed flights in the Weather category are due to weather  
+    a. 30% of all delayed flights in the Late-Arriving category are due to weather  
+    a. From April to August, 40% of delayed flights in the NAS category are due to weather. The rest of the months, the proportion rises to 65%    
+
+_type your results and analysis here_
+
+```{python}
+# Include and execute your code here
+
+
+# Rename columns to simpler names 
+df = df.rename(columns={
+    "minutes_delayed_weather": "weather_delay",
+    "minutes_delayed_late_aircraft": "late_aircraft_delay",
+    "minutes_delayed_nas": "nas_delay"
+})
+
+#Convert relevant columns to numeric 
+cols_to_numeric = [
+    "weather_delay",
+    "late_aircraft_delay",
+    "nas_delay",
+    "num_of_flights_total",
+    "num_of_delays_total"
+]
+for col in cols_to_numeric:
+    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+#Replace missing values in Late Aircraft delay with the mean
+late_mean = df["late_aircraft_delay"].mean(skipna=True)
+df["late_aircraft_delay"] = df["late_aircraft_delay"].fillna(late_mean)
+print(f"Mean value used to fill missing Late Aircraft delays: {late_mean:.2f}")
+
+#Normalize month names for accurate matching (April–August rule)
+df["month"] = df["month"].astype(str).str.strip().str.title()
+
+#Define months April–August for the NAS delay rule
+summer_months = ["April", "May", "June", "July", "August"]
+
+#Apply BTS calculation rules for total weather-related delays
+df["weather_delay_total"] = (
+    df["weather_delay"]                                # 100% of Weather delays
+    + 0.30 * df["late_aircraft_delay"]                 # 30% of Late Aircraft delays
+    + np.where(df["month"].isin(summer_months),
+               0.40 * df["nas_delay"],                 # 40% NAS (Apr–Aug)
+               0.65 * df["nas_delay"])                 # 65% NAS (Sep–Mar)
+)
+
+#Show first 5 rows to verify calculations
+df[[
+    "airport_code", "month",
+    "weather_delay", "late_aircraft_delay", "nas_delay",
+    "weather_delay_total"
+]].head()
+
+
+```
+
+
+```{python}
+# Include and execute your code here
+
+```
+
+
+```{python}
+# Include and execute your code here
+
+```
+
+
+
+## QUESTION|TASK 5
+
+__Using the new weather variable calculated above, create a barplot showing the proportion of all flights that are delayed by weather at each airport. Describe what you learn from this graph.__  
+
+_type your results and analysis here_
+```{python}
+# Include and execute your code here
+
+weather_summary = (
+df.groupby("airport_code", as_index=False)
+.agg(
+total_flights=("num_of_flights_total", "sum"),
+total_weather_delays=("weather_delay_total", "sum")
+)
+)
+
+weather_summary["prop_weather_delay"] = (
+weather_summary["total_weather_delays"] / weather_summary["total_flights"]
+)
+
+weather_summary = weather_summary.sort_values("prop_weather_delay", ascending=False)
+
+display(weather_summary.round(3))
+
+p_weather = (
+ggplot(weather_summary, aes(x="airport_code", y="prop_weather_delay"))
++ geom_bar(stat="identity", fill="skyblue")
++ ggtitle("Proportion of Flights Delayed by Weather per Airport")
++ xlab("Airport Code")
++ ylab("Proportion of Weather Delays")
++ theme(
+panel_background=element_rect(fill="white"),
+panel_grid_major_y=element_line(color="gray", size=0.4),
+axis_text_x=element_text(angle=45, hjust=1)
+)
+)
+
+p_weather
+
+
+
+```
+
+
+---
+
+
+## STRETCH QUESTION|TASK 1
+
+__Which delay is the worst delay?__ Create a similar analysis as above for Weahter Delay with: Carrier Delay and Security Delay. Compare the proportion of delay for each of the three categories in a Chart and a Table. Describe your results.
+
+_type your results and analysis here_
+
+```{python}
+# Include and execute your code here
+
+
+# --- STRETCH QUESTION | TASK 1: Which Delay is the Worst Delay? ---
+
+# Rename columns for consistency
+df = df.rename(columns={
+    "minutes_delayed_carrier": "carrier_delay",
+    "minutes_delayed_security": "security_delay"
+})
+
+# Ensure numeric data types for calculations
+cols = ["weather_delay_total", "carrier_delay", "security_delay", "num_of_flights_total"]
+for c in cols:
+    df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+
+# Group by airport and calculate total flights and delay sums
+delay_compare = (
+    df.groupby("airport_code", as_index=False)
+      .agg(
+          total_flights=("num_of_flights_total", "sum"),
+          total_weather_delays=("weather_delay_total", "sum"),
+          total_carrier_delays=("carrier_delay", "sum"),
+          total_security_delays=("security_delay", "sum")
+      )
+)
+
+# Compute proportions for each delay type
+delay_compare["prop_weather"]  = delay_compare["total_weather_delays"]  / delay_compare["total_flights"]
+delay_compare["prop_carrier"]  = delay_compare["total_carrier_delays"]  / delay_compare["total_flights"]
+delay_compare["prop_security"] = delay_compare["total_security_delays"] / delay_compare["total_flights"]
+
+# Display summary table rounded to 3 decimals
+display(delay_compare[["airport_code", "prop_weather", "prop_carrier", "prop_security"]].round(3))
+
+# Prepare data for grouped bar chart
+delay_long = delay_compare.melt(
+    id_vars="airport_code",
+    value_vars=["prop_weather", "prop_carrier", "prop_security"],
+    var_name="delay_type",
+    value_name="proportion"
+)
+
+# Clean labels for chart legend
+delay_long["delay_type"] = delay_long["delay_type"].replace({
+    "prop_weather": "Weather Delay",
+    "prop_carrier": "Carrier Delay",
+    "prop_security": "Security Delay"
+})
+
+# Create grouped bar chart comparing the three delay types
+p_delay = (
+    ggplot(delay_long, aes(x="airport_code", y="proportion", fill="delay_type"))
+    + geom_bar(stat="identity", position="dodge")
+    + ggtitle("Comparison of Weather, Carrier, and Security Delays by Airport")
+    + xlab("Airport Code")
+    + ylab("Proportion of Flights Delayed")
+    + scale_fill_manual(values=["skyblue", "lightcoral", "gold"])
+    + theme(
+        panel_background=element_rect(fill="white"),
+        panel_grid_major_y=element_line(color="gray", size=0.4),
+        axis_text_x=element_text(angle=45, hjust=1),
+        legend_title=element_text(size=10)
+    )
+)
+
+p_delay
+
+
+```
+
+---
+
